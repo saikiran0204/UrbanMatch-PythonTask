@@ -106,7 +106,9 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 
 # Endpoint to find matches for a user based on profile information
 @app.get("/users/{user_id}/matches")
+@limiter.limit("10/minute")
 def find_matches(
+    request: Request,  # Required for SlowAPI rate limiter
     user_id: int, 
     skip: int = 0, 
     limit: int = 5, 
