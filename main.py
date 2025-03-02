@@ -14,7 +14,6 @@ import json
 
 app = FastAPI()
 
-
 # Logging setup
 logging.basicConfig(filename="app.log", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -25,6 +24,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}))
 app.add_middleware(SlowAPIMiddleware)
 
+# Create database tables
 Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -34,12 +34,15 @@ def get_db():
     finally:
         db.close()
 
-
+# Endpoint to create a new user
 @app.post("/users/", response_model=schemas.User)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    # Check if the email is already registered
     existing_user = db.query(models.User).filter(models.User.email == user.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered.")
+    
+    # Create a new user
     db_user = models.User(**user.model_dump())
     db.add(db_user)
     db.commit()
@@ -47,11 +50,13 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     logger.info(f"User created: {db_user.id}")
     return db_user.model_dump()
 
+# Endpoint to read a list of users
 @app.get("/users/", response_model=List[schemas.User])
 def read_users(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
-    users = db.query(models.User).filter(models.User.is_active==True).offset(skip).limit(limit).all()
+    users = db.query(models.User).filter(models.User.is_active == True).offset(skip).limit(limit).all()
     return [user.model_dump() for user in users]
 
+# Endpoint to read a user by ID
 @app.get("/users/{user_id}", response_model=schemas.User)
 def read_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -59,12 +64,13 @@ def read_user(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return user.model_dump()
 
-
+# Endpoint to update a user by ID
 @app.patch("/users/{user_id}")
 def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.id == user_id, models.User.is_active==True).first()
+    user = db.query(models.User).filter(models.User.id == user_id, models.User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    
     update_data = user_update.dict(exclude_unset=True)
 
     # Check if the new email already exists
@@ -73,32 +79,32 @@ def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Dep
         if existing_user:
             raise HTTPException(status_code=400, detail="Email already registered by another user.")
 
-
+    # Update interests if provided
     if "interests" in update_data:
         update_data["interests"] = json.dumps(update_data["interests"])
+    
+    # Update user attributes
     for key, value in update_data.items():
         setattr(user, key, value)
+    
     db.commit()
     db.refresh(user)
     logger.info(f"User updated: {user_id}")
     return user.model_dump()
 
-
+# Endpoint to delete (deactivate) a user by ID
 @app.delete("/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.id == user_id, user.is_active == False).first()
+    user = db.query(models.User).filter(models.User.id == user_id, models.User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found or already deactivated")
+    
     user.is_active = False
     db.commit()
     logger.info(f"User deactivated: {user_id}")
     return {"message": "User deactivated"}
 
-
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
-
+# Endpoint to find matches for a user based on profile information
 @app.get("/users/{user_id}/matches")
 def find_matches(
     user_id: int, 
@@ -106,12 +112,14 @@ def find_matches(
     limit: int = 5, 
     db: Session = Depends(get_db)
 ):
+    # Retrieve the user by ID
     user = db.query(models.User).filter(models.User.id == user_id, models.User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    # Retrieve potential matches based on city and gender
     users = db.query(models.User).filter(
-        models.User.id != user_id, models.User.is_active == True, models.User.city == user.city, models.User.gender != user.gender, models.User.is_active==True
+        models.User.id != user_id, models.User.is_active == True, models.User.city == user.city, models.User.gender != user.gender
     ).all()
     
     if not users:
